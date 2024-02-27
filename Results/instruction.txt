@@ -1,0 +1,4 @@
+'diff' files correspond to differentially expressed genes and miRNAs, respectively.
+'down' represents the down-regulated features of the two types of data.
+'up' represents the up-regulated features of the two types of data.
+'vol' represents the volcano plot of the differential features of the two types of data.
