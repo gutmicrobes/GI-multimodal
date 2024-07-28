@@ -1,239 +1,425 @@
-rm(list = ls())
-setwd("E:/Graduation_design/WGCNA")
-# if (!requireNamespace("BiocManager", quietly = TRUE))
-#   install.packages("BiocManager")
-# BiocManager::install("AnnotationDbi")
-# BiocManager::install("impute")
-# BiocManager::install("GO.db")
-# BiocManager::install("preprocessCore")
-# site="https://mirrors.tuna.tsinghua.edu.cn/CRAN"
-library(dynamicTreeCut)
-library(stats)
-library(fastcluster)
-#biocLite("GO.db")
+# åŠ è½½å¿…é¡»çš„åŒ…å¹¶åšå‚æ•°è®¾ç½®
+library(MASS)
+library(class)
+library(cluster)
+library(impute)
+library(Hmisc)
 library(WGCNA)
-library(lattice)
-library(latticeExtra)
-library(ggplot2)
+options(stringsAsFactors = F)
+library(DESeq2)
+# rownames(labelall) <-colnames(dds)
+# write.csv(labelall,"alllabel.csv")
+datExpr <-mrna1
+# dds <- log(datExpr+1)
+# write.csv(dds,"logdata.csv")
+# datExpr <-dds
+# ç­›é€‰æ–¹æ³•ï¼šmad>1ä¸”top5000
+WGCNA_matrix = t(datExpr[order(apply(datExpr,1,mad),decreasing = T)[1:5000],])
+datExpr_filted <- WGCNA_matrix
+#datExpr_filted <- t(mrna1)
 
-#¶ÁÈë»ùÒò±í´ïÆ×£¬»ùÒòÔÚĞĞ£¬Ñù±¾ÔÚÁĞ
-rt=read.csv("finaly_mrna.csv",header = T,check.names = F)
-rownames(rt) = rt[,1]
-rt= rt[,2:ncol(rt)]
-#rt = as.numeric(unlist(rt))
-exp=as.matrix(rt)
-
-dimname=list(rownames(exp),colnames(exp))
-rt=matrix(as.numeric(as.matrix(exp)),nrow = nrow(exp),dimnames = dimname)
-rt <- as.data.frame(rt) #×ª»»ÎªÑùÆ·ÔÚĞĞ£¬»ùÒòÔÚÁĞµÄ¾ØÕó
-
-#¾ÛÀà²é¿´ÊÇ·ñÓĞÀëÈºÑùÆ·
-sampleTree = hclust(dist(rt), method = "average")
+gsg = goodSamplesGenes(datExpr_filted, verbose = 3)
+gsg$allOK
+sampleTree = hclust(dist(datExpr_filted), method = "average")
+par(mfrow = c(1,1));
 plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="")
+save(datExpr_filted, file = "datExpr_filted_hclust.RData")
+datExpr_filted <- datExpr_filted[!(rownames(datExpr_filted) %in% c("TCGA.BR.A4IV.01A", "TCGA.RD.A8MW.01A","TCGA.VQ.A91V.01A")), ]
+#datExpr_filted <- datExpr_filted[!(rownames(datExpr_filted) %in% c("TCGA.CD.8531.01A")), ]
 
 
-#Éú³É°üº¬²»Í¬ãĞÖµµÄÊıÁĞ
-powers = c(c(1:10), seq(from = 12, to=20, by=2))
-power
-# ±éÀúÉÏÊö¸ø¶¨µÄãĞÖµ£¬ÕÒµ½·ûºÏÎŞ±ê¶ÈÍøÂç×¼ÔòµÄpower
-sft = pickSoftThreshold(rt, powerVector = powers, verbose = 5)
+# Constructing a weighted gene network entails the choice of the soft thresholding power to which coexpression similarity is raised to calculate adjacency.
+# Set up a bunch of power gradients(è®¾å®šä¸€äº›åˆ—poweræ¢¯åº¦)
+powers = c(c(1:10), seq(from = 12, to=30, by=2))
 
-#½«ÉÏÊö±éÀú¼ÆËã½á¹û¿ÉÊÓ»¯
-sizeGrWindow(9, 5)
-par(mfrow = c(1,2)); #Ò»Ò³Á½Í¼
-cex1 = 0.8;
-# Scale-free topology fit index as a function of the soft-thresholding power
+sft = pickSoftThreshold(datExpr_filted, powerVector = powers, verbose = 5) #this step will take some time
+# The "sft" object contains the network characteristics that calculated for each power value(åœ¨sftè¿™ä¸ªå¯¹è±¡ä¸­ä¿å­˜äº†æ¯ä¸ªpowerå€¼è®¡ç®—å‡ºæ¥çš„ç½‘ç»œçš„ç‰¹???)
+str(sft) 
+# make figures to show the soft thresholding power
+par(mfrow = c(1,2))
+cex1 = 0.9
+# x axis is the Soft threshold (power)ï¼Œy axis is evaluation parameters for scale-free networks(çºµè½´æ˜¯æ— æ ‡åº¦ç½‘ç»œçš„è¯„ä¼°å‚???)
+# The higher R^2 ,the more scale-free the network is.(æ•°å€¼è¶Šé«˜ï¼Œç½‘ç»œè¶Šç¬¦åˆæ— æ ‡åº¦ç‰¹å¾ (non-scale))
+# "FitIndices" stores the characteristics of each network corresponding to its power. (fitIndicesä¿å­˜äº†æ¯ä¸ªpowerå¯¹åº”çš„ç½‘ç»œçš„ç‰¹å¾)
 plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
-     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
-     main = paste("Scale independence"));
-text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
-     labels=powers,cex=cex1,col="red");
-#ºáÖáÊÇSoft threshold (power)£¬×İÖáÊÇÎŞ±ê¶ÈÍøÂçµÄÆÀ¹À²ÎÊı£¬ÊıÖµÔ½¸ß£¬ÍøÂçÔ½·ûºÏÎŞ±ê¶ÈÌØÕ÷ (non-scale)
-# this line corresponds to using an R^2 cut-off of h
-abline(h=0.80,col="red")
-# Mean connectivity as a function of the soft-thresholding power
+       xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+       main = paste("Scale independence"))
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],labels=powers,cex=cex1,col="red")
+# R^2 value(h) usually around 0.9. But if there's some big changes between your samples, R^2 value will be lower. 
+# In my case, I use 0.7 to set the criteria.
+abline(h=0.9,col="red")
 plot(sft$fitIndices[,1], sft$fitIndices[,5],
-     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
-     main = paste("Mean connectivity"))
+       xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+       main = paste("Mean connectivity"))
 text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+# System will recommend the best power value to you. 
+# But you can not totally trust it, depend on your data.
+sft$powerEstimate  #I use power =3 å»ºè®®3
 
-# ¼ÆËã»ùÒòÖ®¼äµÄ¼ÓÈ¨Ïà¹ØÏµÊı
-softPower <- sft$powerEstimate #µÃµ½powerµÄ×îÓÅÖµ
-#softpower = 6
-adjacency = adjacency(rt, power = softPower);
 
-# ¼ÆËãµÃµ½ÍØÆË¾ØÕó
-TOM = TOMsimilarity(adjacency);
+#ä¸Šä¸€æ­¥ä¼°è®¡çš„æœ€ä½³ power å€¼
+powers <-3
 
-# ¼ÆËã»ùÒòÖ®¼äµÄÏàÒì¶È,¸ù¾İÏàÒì³Ì¶È½øĞĞ¾ÛÀà
-dissTOM = 1-TOM       
-hierTOM = hclust(as.dist(dissTOM),method="average");
-#write.csv(dissTOM,"./dissTOM.csv")
+#è·å¾— TOM çŸ©é˜µ
+adjacency <- adjacency(datExpr_filted, power = powers)
+tom_sim <- TOMsimilarity(adjacency)
+rownames(tom_sim) <- rownames(adjacency)
+colnames(tom_sim) <- colnames(adjacency)
+tom_sim[1:6,1:6]
 
-# ¼ìÑéÑ¡¶¨µÄ¦ÂÖµÏÂ¼ÇÒäÍøÂçÊÇ·ñ±Æ½ü scale free
-k <- softConnectivity(datE=rt,power=softPower) 
+#è¾“å‡º TOM çŸ©é˜µ
+#write.table(tom_sim, 'TOMsimilarity.txt', sep = '\t', col.names = NA, quote = FALSE)
+
+#TOM ç›¸å¼‚åº¦ = 1 â€“ TOM ç›¸ä¼¼åº¦
+tom_dis  <- 1 - tom_sim
+
+#å±‚æ¬¡èšç±»æ ‘ï¼Œä½¿ç”¨ä¸­å€¼çš„éæƒé‡æˆå¯¹ç»„æ³•çš„å¹³å‡èšåˆèšç±»
+geneTree <- hclust(as.dist(tom_dis), method = 'average')
+par(mfrow = c(1,1))
+plot(geneTree, xlab = '', sub = '', main = 'Gene clustering on TOM-based dissimilarity',
+     labels = FALSE, hang = 0.04)
+k <- softConnectivity(datE=datExpr_filted,power=3)
+head(k)
 sizeGrWindow(10, 5)
 par(mfrow=c(1,2))
 hist(k)
 scaleFreePlot(k,main="Check Scale free topology\n")
+# è¿é€šæ€§ç›´æ–¹å›¾ï¼šå¦‚æœç½‘ç»œç¬¦åˆæ— æ ‡åº¦æ‹“æ‰‘ç‰¹æ€§ï¼Œè¿é€šæ€§ç›´æ–¹å›¾åº”æ˜¾ç¤ºå¤§å¤šæ•°åŸºå› çš„è¿é€šæ€§è¾ƒä½ï¼Œè€Œå°‘æ•°åŸºå› çš„è¿é€šæ€§è¾ƒé«˜ã€‚
+# æ— æ ‡åº¦æ‹“æ‰‘ç‰¹æ€§æ£€æŸ¥ï¼šå¦‚æœç½‘ç»œç¬¦åˆæ— æ ‡åº¦æ‹“æ‰‘ç‰¹æ€§ï¼ŒåŒå¯¹æ•°å›¾ä¸­çš„ç‚¹åº”å¤§è‡´æ²¿ä¸€æ¡ç›´çº¿åˆ†å¸ƒï¼Œè¡¨ç¤ºè¿é€šæ€§çš„é¢‘ç‡åˆ†å¸ƒéµå¾ªå¹‚å¾‹åˆ†å¸ƒã€‚
 
+#ä½¿ç”¨åŠ¨æ€å‰ªåˆ‡æ ‘æŒ–æ˜æ¨¡å—
+minModuleSize <- 30  #æ¨¡å—åŸºå› æ•°ç›®
+dynamicMods <- cutreeDynamic(dendro = geneTree, distM = tom_dis,
+                             deepSplit = 2, pamRespectsDendro = FALSE, minClusterSize = minModuleSize)
 
-
-geneTree = hclust(as.dist(dissTOM), method = "average");
-#memory.limit(1000000)
-# Plot the resulting clustering tree (dendrogram)
-windows()
-sizeGrWindow(12,9)
-plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
-     labels = FALSE, hang = 0.01);
-
-minModuleSize = 30;
-
-dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
-                            deepSplit = 2, pamRespectsDendro = FALSE,
-                            minClusterSize = minModuleSize);
 table(dynamicMods)
+#æ¨¡å—é¢œè‰²æŒ‡ä»£
+dynamicColors <- labels2colors(dynamicMods)
+table(dynamicColors)
+
+plotDendroAndColors(geneTree, dynamicColors, 'Dynamic Tree Cut',
+                    dendroLabels = FALSE, addGuide = TRUE, hang = 0.03, guideHang = 0.05,
+                    main = 'Gene dendrogram and module colors')
 
 
-# æ‹“æ‰‘çƒ­å›¾ï¼?
-nSelect = 400 
-# For reproducibility, we set the random seed 
-set.seed(10); 
-select = sample(1167, size = nSelect)
-selectTOM = dissTOM[select, select]
-dynamicColors=labels2colors(dynamicMods)
-# There's no simple way of restricting a clustering tree to a subset of genes, so we must re-cluster. 
-selectTree = hclust(as.dist(selectTOM), method = "average") 
-selectColors = dynamicColors[select]; 
-# Open a graphical window 
-sizeGrWindow(9,9) 
-# Taking the dissimilarity to a power, say 10, makes the plot more informative by effectively changing 
-# the color palette; setting the diagonal to NA also improves the clarity of the plot 
-plotDiss = selectTOM^softPower; 
-diag(plotDiss) = NA; 
-TOMplot(plotDiss, 
-        selectTree, 
-        selectColors, 
-        main = "Network heatmap plot, selected genes") 
+# #åŸºå› è¡¨è¾¾èšç±»æ ‘å’Œå…±è¡¨è¾¾æ‹“æ‰‘çƒ­å›¾
+# plot_sim <- -(1-tom_sim)
+# #plot_sim <- log(tom_sim)
+# diag(plot_sim) <- NA
+# TOMplot(plot_sim, geneTree, dynamicColors,
+#         main = 'Network heatmap plot, selected genes')
+# 
+# 
+# 
+# library(pheatmap)
+# # è‡ªå®šä¹‰é¢œè‰²æ˜ å°„å‡½æ•°
+# color_palette <- colorRampPalette(c("white", "blue", "red"))(100)
+# 
+# # ä½¿ç”¨ pheatmap ç»˜åˆ¶çƒ­å›¾
+# pheatmap(plot_sim,
+#          cluster_rows = geneTree,
+#          cluster_cols = geneTree,
+#          color = color_palette,
+#          main = "Network heatmap plot, selected genes",
+#          annotation_colors = list(module = dynamicColors),
+#          show_rownames = FALSE,
+#          show_colnames = FALSE)
 
-#¼ÆËãÃ¿¸öÄ£¿éµÄÌØÕ÷ÏòÁ¿»ùÒò£¬ÎªÄ³Ò»ÌØ¶¨Ä£¿éµÚÒ»Ö÷³É·Ö»ùÒòE¡£´ú±íÁË¸ÃÄ£¿éÄÚ»ùÒò±í´ïµÄÕûÌåË®Æ½
-dynamicColors=labels2colors(dynamicMods)
-MEList = moduleEigengenes(rt, colors = dynamicColors)
-MEs = MEList$eigengenes
+#è®¡ç®—åŸºå› è¡¨è¾¾çŸ©é˜µä¸­æ¨¡å—çš„ç‰¹å¾åŸºå› ï¼ˆç¬¬ä¸€ä¸»æˆåˆ†ï¼‰
+MEList <- moduleEigengenes(datExpr_filted, colors = dynamicColors)
+#æ¨¡å—ä¸­æ¯ä¸ªæ ·æœ¬çš„ç»¼åˆè¡¨è¾¾
+MEs <- MEList$eigengenes
+head(MEs)[1:6]
 
-#¸ù¾İÄ£¿éÌØÕ÷ÏòÁ¿»ùÒò¼ÆËãÄ£¿éÏàÒì¶È£º
-MEDiss = 1-cor(MEs);
-# Cluster module eigengenes
-METree = hclust(as.dist(MEDiss), method = "average");
-# Plot the result »æÖÆ15¸öÄ£¿éÌØÕ÷ÏòÁ¿µÄÏà¹ØÏµÊıÈÈÍ¼
-plotEigengeneNetworks(MEs, 
-                      "Eigengene adjacency heatmap", 
-                      marHeatmap = c(3,4,2,2), 
-                      plotDendrograms = FALSE, 
-                      xLabelsAngle = 90) 
+#è¾“å‡ºæ¨¡å—ç‰¹å¾åŸºå› çŸ©é˜µ
+#write.table(MEs, 'moduleEigengenes.txt', sep = '\t', col.names = NA, quote = FALSE)
 
-#ÌØÕ÷ÏòÁ¿»ùÒò¾ÛÀàÊ÷×´Í¼£¬ºìÏßÒÔÏÂµÄÄ£¿é±íÊ¾Ïà¹ØĞÔ>0.8£¬½«±»ºÏ²¢
-plot(METree, 
-     main = "Clustering of module eigengenes",
-     xlab = "", 
-     sub = "",
-     col="purple",
-     col.axis = 'green3',
-     col.lab = 'purple',
-     col.main = 'magenta',
-     lty = 1,
-     pch = 1,
-     #type = 1
-     )
-# ÔÚ¾ÛÀàÍ¼ÖĞ»­³ö¼ôÇĞÏß
-MEDissThres = 0.2
-abline(h=MEDissThres, col = "red")
+#é€šè¿‡æ¨¡å—ç‰¹å¾åŸºå› è®¡ç®—æ¨¡å—é—´ç›¸å…³æ€§ï¼Œè¡¨å¾æ¨¡å—é—´ç›¸ä¼¼åº¦
+ME_cor <- cor(MEs)
+ME_cor[1:6,1:6]
+# è‡ªå®šä¹‰é¢œè‰²æ˜ å°„å‡½æ•°
+color_palette <- colorRampPalette(c("blue", "white", "red"))(100)
+library(pheatmap)
+# ç»˜åˆ¶ç›¸å…³æ€§çƒ­å›¾
+pheatmap(ME_cor, 
+         color = color_palette, 
+         main = "Module Eigengene Correlation Heatmap",cluster_rows = FALSE,
+         cluster_cols = FALSE)
+#ç»˜åˆ¶èšç±»æ ‘è§‚å¯Ÿ
+METree <- hclust(as.dist(1-ME_cor), method = 'average')
+par(mfrow=c(1,1))
+plot(METree, main = 'Clustering of module eigengenes', xlab = '', sub = '')
+
+#æ¢ç´¢æ€§åˆ†æï¼Œè§‚å¯Ÿæ¨¡å—é—´çš„ç›¸ä¼¼æ€§
+#height å€¼å¯ä»£è¡¨æ¨¡å—é—´çš„ç›¸å¼‚åº¦ï¼Œå¹¶ç¡®å®šä¸€ä¸ªåˆé€‚çš„é˜ˆå€¼ä½œä¸ºå‰ªåˆ‡é«˜åº¦
+#ä»¥ä¾¿ä¸ºä½ç›¸å¼‚åº¦ï¼ˆé«˜ç›¸ä¼¼åº¦ï¼‰çš„æ¨¡å—åˆå¹¶æä¾›ä¾æ®
+abline(h = 0.2, col = 'blue')
+abline(h = 0.35, col = 'red')
+
+#æ¨¡å—ç‰¹å¾åŸºå› èšç±»æ ‘çƒ­å›¾
+plotEigengeneNetworks(MEs,"Eigengene adjacency heatmap", cex.lab = 0.8, xLabelsAngle= 90,plotDendrograms = FALSE,
+                      marDendro = c(0, 4, 1, 2), marHeatmap = c(3, 4, 1, 2))
+
+
+#ç›¸ä¼¼æ¨¡å—åˆå¹¶ï¼Œä»¥ 0.25 ä½œä¸ºåˆå¹¶é˜ˆå€¼ï¼ˆå‰ªåˆ‡é«˜åº¦ï¼‰ï¼Œåœ¨æ­¤é«˜åº¦ä¸‹çš„æ¨¡å—å°†åˆå¹¶
+#è¿‘ä¼¼ç†è§£ä¸ºç›¸å…³ç¨‹åº¦é«˜äº 0.75 çš„æ¨¡å—å°†åˆå¹¶åˆ°ä¸€èµ·
+merge_module <- mergeCloseModules(datExpr_filted, dynamicColors, cutHeight = 0.25, verbose = 3)
+mergedColors <- merge_module$colors
+table(mergedColors)
+
+#åŸºå› è¡¨è¾¾å’Œæ¨¡å—èšç±»æ ‘
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors), c('Dynamic Tree Cut', 'Merged dynamic'),
+                    dendroLabels = FALSE, addGuide = TRUE, hang = 0.03, guideHang = 0.05)
 
 
 
-# ½«Ïà¹ØĞÔÏµÊı´óÓÚ0.8µÄÄ£¿éºÏ²¢µô£¬¼´ÏàÒìĞÔÏµÊıĞ¡ÓÚ0.2:×îºóµÃµ½10¸öÄ£¿é
-merge_modules = mergeCloseModules(rt, dynamicColors, cutHeight = MEDissThres, verbose = 3)
-# ºÏ²¢ºóµÄÑÕÉ«£º
-mergedColors = merge_modules$colors;
-# ĞÂÄ£¿éµÄÌØÕ÷ÏòÁ¿»ùÒò£º
-mergedMEs = merge_modules$newMEs;
-plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
-                    c("Dynamic Tree Cut", "Merged dynamic"),
-                    dendroLabels = FALSE, hang = 0.03,
-                    addGuide = TRUE, guideHang = 0.05,cex.lab=1.2,cex.colorLabels = 1.2)
+datTraits <-labelall
+rownames(datTraits) <-colnames(mrna1)
+datTraits <- datTraits[!(rownames(datTraits) %in% c("TCGA.BR.A4IV.01A", "TCGA.RD.A8MW.01A","TCGA.VQ.A91V.01A")), ]
 
-#¶ÁÈëÑù±¾ĞÔ×´ĞÅÏ¢£¬0´ú±í½¡¿µ£¬1´ú±í»¼²¡
-dataTraits <- read.csv("finally_label.csv",header=TRUE,row.names = 1)
-x = c()
-for (i in 1:515){
-  if (dataTraits[i,] != 2){
-    x = c(x,0)
-  }
-  else {
-    x = c(x,1)
-  }
+#æ‚£è€…çš„ä¸´åºŠè¡¨å‹æ•°æ®
+trait <- datTraits
+colnames(trait) <-c("Subtype I","Subtype II","Subtype III")
+
+#ä½¿ç”¨ä¸Šä¸€æ­¥æ–°ç»„åˆçš„å…±è¡¨è¾¾æ¨¡å—çš„ç»“æœ
+module <- merge_module$newMEs
+
+#æ‚£è€…åŸºå› å…±è¡¨è¾¾æ¨¡å—å’Œä¸´åºŠè¡¨å‹çš„ç›¸å…³æ€§åˆ†æ
+moduleTraitCor <- cor(module, trait, use = 'p')
+moduleTraitCor[1:3,1:3]  #ç›¸å…³çŸ©é˜µ
+
+#ç›¸å…³ç³»æ•°çš„ p å€¼çŸ©é˜µ
+moduleTraitPvalue <- corPvalueStudent(moduleTraitCor, nrow(module))
+
+#è¾“å‡ºç›¸å…³ç³»æ•°çŸ©é˜µæˆ– p å€¼çŸ©é˜µ
+#write.table(moduleTraitCor, 'moduleTraitCor.txt', sep = '\t', col.names = NA, quote = FALSE)
+#write.table(moduleTraitPvalue, 'moduleTraitPvalue.txt', sep = '\t', col.names = NA, quote = FALSE)
+# ç§»é™¤ grey æ¨¡å—
+moduleTraitCor <- moduleTraitCor[rownames(moduleTraitCor) != "MEgrey", ]
+moduleTraitPvalue <- moduleTraitPvalue[rownames(moduleTraitPvalue) != "MEgrey", ]
+
+#ç›¸å…³å›¾ç»˜åˆ¶
+textMatrix <- paste(signif(moduleTraitCor, 2), '\n(', signif(moduleTraitPvalue, 1), ')', sep = '')
+dim(textMatrix) <- dim(moduleTraitCor)
+par(mfrow = c(1,1))
+#æŸä¸ªæ¨¡å—ç‰¹å¾å‘é‡ä¸æŸä¸ªè¡¨å‹å‘ˆè´Ÿç›¸å…³ï¼Œè¡¨ç¤ºè¯¥è¡¨å‹å€¼å¢åŠ æ—¶ï¼Œè¯¥æ¨¡å—ç‰¹å¾å‘é‡çš„å€¼å€¾å‘äºå‡å°‘ã€‚
+labeledHeatmap(Matrix = moduleTraitCor, main = paste('Module-trait relationships'),
+               xLabels = names(trait), yLabels = rownames(moduleTraitPvalue), ySymbols = rownames(moduleTraitPvalue),
+               colorLabels = FALSE,  xLabelsAngle = 0,  xLabelsAdj =0.5,
+               colors = blueWhiteRed(45), cex.text = 0.7, zlim = c(-1,1),
+               textMatrix = textMatrix, setStdMargins = FALSE)
+
+
+
+# library(ggplot2)
+# # å°†æ•°æ®è½¬æ¢ä¸ºé•¿æ ¼å¼
+# library(reshape2)
+# moduleTraitCor_long <- melt(moduleTraitCor)
+# moduleTraitPvalue_long <- melt(moduleTraitPvalue)
+# 
+# # åˆå¹¶ç›¸å…³æ€§å’Œ p å€¼æ•°æ®
+# moduleTrait_long <- data.frame(
+#   Module = rep(rownames(moduleTraitCor), times = ncol(moduleTraitCor)),
+#   Trait = rep(colnames(moduleTraitCor), each = nrow(moduleTraitCor)),
+#   Correlation = moduleTraitCor_long$value,
+#   Pvalue = moduleTraitPvalue_long$value
+# )
+# 
+# # ç»˜åˆ¶çƒ­å›¾
+# ggplot(moduleTrait_long, aes(x = Trait, y = Module, fill = Correlation)) +
+#   geom_tile() +
+#   scale_fill_gradient2(low = "#5573BC", mid = "white", high = "#ED1E24", midpoint = 0) +
+#   geom_text(aes(label = sprintf("%.2f\n(%.1e)", Correlation, Pvalue)), size = 3) +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 0, hjust = 0.5)) +  # è®¾ç½® x è½´æ ‡ç­¾æ°´å¹³
+#   labs(title = "Module-trait relationships", x = "", y = "")
+
+
+#åŸºå› ä¸æ¨¡å—çš„å¯¹åº”å…³ç³»åˆ—è¡¨
+gene_module <- data.frame(gene_name = colnames(datExpr_filted), module = mergedColors, stringsAsFactors = FALSE)
+head(gene_module)
+
+#â€œblackâ€æ¨¡å—å†…çš„åŸºå› åç§°0
+gene_module_select <- subset(gene_module, module == 'turquoise')$gene_name
+#1
+gene_module_select <- subset(gene_module, module == 'brown')$gene_name
+
+gene_module_select <- subset(gene_module, module == 'black')$gene_name
+
+
+#â€œblackâ€æ¨¡å—å†…åŸºå› åœ¨å„æ ·æœ¬ä¸­çš„è¡¨è¾¾å€¼çŸ©é˜µï¼ˆåŸºå› è¡¨è¾¾å€¼çŸ©é˜µçš„ä¸€ä¸ªå­é›†ï¼‰
+gene_select <- t(datExpr_filted[,gene_module_select])
+
+#â€œblackâ€æ¨¡å—å†…åŸºå› çš„å…±è¡¨è¾¾ç›¸ä¼¼åº¦ï¼ˆåœ¨ TOM çŸ©é˜µä¸­æå–å­é›†ï¼‰
+tom_select <- tom_sim[gene_module_select,gene_module_select]
+
+# kwithin0 <-rowSums(tom_select)-1
+# kwithin0 <-as.data.frame(kwithin0)
+# rownames(kwithin0) <-rownames(tom_select)
+# 
+# kwithin1 <-rowSums(tom_select)
+# kwithin1 <-as.data.frame(kwithin1)
+# rownames(kwithin1) <-rownames(tom_select)
+# 
+# 
+# kwithin2 <-rowSums(tom_select)
+# kwithin2 <-as.data.frame(kwithin2)
+# rownames(kwithin2) <-rownames(tom_select)
+# 
+# colorh1<-mergedColors
+# kbe=abs(cor(datExpr_filted,use="p"))^softPower 
+# degrees=intramodularConnectivity(kbe, mergedColors) 
+# kwithin0
+# å®šä¹‰ä¸€ä¸ªç®€å•çš„åŠ æ³•å‡½æ•°
+calcukwi <- function(color) {
+  moduleGenes <- which(mergedColors == color)
+  moduleExpr <- datExpr_filted[, moduleGenes]
+  
+  # è®¡ç®—æ¨¡å—å†…çš„åŠ æƒé‚»æ¥çŸ©é˜µ
+  kbe_module <- abs(cor(moduleExpr, use = "p"))^powers
+  
+  # è®¡ç®—æ¨¡å—å†…çš„è¿é€šæ€§
+  connectivity <- rowSums(kbe_module) - 1
+  result <- as.data.frame(connectivity)
+  return(result)
 }
-
-dataTraits=as.matrix(x)
-ncol(dataTraits)
-nrow(dataTraits)
-ncol(mergedMEs)
-nrow(mergedMEs)
-#¼ÆËãĞÔ×´ÓëÌØÕ÷»ùÒòµÄÏà¹ØÏµÊıÒÔ¼°pÖµ
-cor_ADR <- signif(WGCNA::cor(dataTraits,mergedMEs,use="p",method="pearson"),5)
-p.values <- corPvalueStudent(cor_ADR,nSamples=515)
-#¸ù¾İ»ùÒòÍøÂçÏÔÖøĞÔ£¬Ò²¾ÍÊÇĞÔ×´ÓëÃ¿¸ö»ùÒò±í´ïÁ¿Ïà¹ØĞÔÔÚ¸÷¸öÄ£¿éµÄ¾ùÖµ×÷Îª¸ÃĞÔ×´ÔÚ¸ÃÄ£¿éµÄÏÔÖøĞÔ£¬ÏÔÖøĞÔ×î´óµÄÄÇ¸öÄ£¿éÓë¸ÃĞÔ×´×îÏà¹Ø£º
-GS1 <- as.numeric(WGCNA::cor(dataTraits,rt,use="p",method="pearson"))
-#ÏÔÖøĞÔÊÇ¾ø¶ÔÖµ£º
-GeneSignificance <- abs(GS1)
-write.csv(GeneSignificance,"./third_GS.csv")
-
-# »ñµÃ¸ÃĞÔ×´ÔÚÃ¿¸öÄ£¿éÖĞµÄÏÔÖøĞÔ£º
-ModuleSignificance <- tapply(GeneSignificance,mergedColors,mean,na.rm=T)
-Find_max_ModuleSign <- which.max(ModuleSignificance)
-#½á¹ûÓëÏà¹ØÏµÊıºÍpÖµËùÑ¡½á¹ûÏàÍ¬
+kwithin0 <-calcukwi("turquoise")
+kwithin1 <-calcukwi("brown")
+kwithin2 <-calcukwi("black")
 
 
+HubGenes <- chooseTopHubInEachModule(datExpr_filted,mergedColors)
+# black         blue        brown         cyan        green  greenyellow      magenta 
+# "COL5A2"      "SPAG5" "AC010976.2"     "KCTD19"      "TACR1"      "P2RY8"      "SNTB1" 
+# midnightblue         pink       purple          red       salmon          tan    turquoise 
+# "PCLO"      "RANP1"       "APOB"       "IL16"     "FCGR1A"       "POMC"       "MPDZ" 
+# yellow 
+# "IGKC" 
 
-#¸ù¾İÉÏÊö¼ÆËã½á¹û£¬ÌôÑ¡ÓëĞÔ×´Ïà¹ØĞÔ×î¸ß×îÏÔÖøµÄÄ£¿éËù°üº¬µÄ»ùÒò
-module = "green";
-probes = colnames(rt)
-inModule = (mergedColors==module);
-modProbes = probes[inModule]; 
-
-modTOM = TOM[inModule, inModule];
-dimnames(modTOM) = list(modProbes, modProbes)
-write.csv(modTOM,"./third_modTOM.csv")
-#½«ÉÏÊö»ùÒòµ¼³öµ½cytoscape
-cyt = exportNetworkToCytoscape(
-  modTOM,
-  edgeFile = paste("CytoscapeInput-edges-", paste(module, collapse="-"), ".txt", sep=""),
-  nodeFile = paste("CytoscapeInput-nodes-", paste(module, collapse="-"), ".txt", sep=""),
-  weighted = TRUE,
-  threshold = 0.02,
-  nodeNames = modProbes, 
-  nodeAttr = mergedColors[inModule]
-);
-
-rtmod <- rt[inModule, inModule];
-colorh1 = mergedColors[inModule]
-
-
-ADJ1=abs(cor(rtmod,use="p"))^softPower 
-Alldegrees1=intramodularConnectivity(ADJ1, colorh1) 
-write.csv(Alldegrees1,"./third_Alldegrees.csv")
-
-rtKME=signedKME(rt, mergedMEs, outputColumnName="MM.")
-head(rtKME)
-write.csv(rtKME,"./third_rtKME.csv")
-
-FilterGenes_spe = ((GeneSignificance > 0.1) & (abs(rtKME["MM.green"])>0.5)) 
-
-table(FilterGenes_spe)
-trait_hubGenes_spe <- colnames(rt)[FilterGenes_spe] 
-write.csv(trait_hubGenes_spe,"./third_genes_spe.csv")
-head(trait_hubGenes_spe)
-trait_hubGenes_spe
-write.csv(trait_hubGenes_spe,"third_cluster_hubGenes_spe.csv")
+# ä¸ºæ¯ä¸ªæ¨¡å—å•ç‹¬è®¡ç®—å†…éƒ¨æ¨¡å—è¿é€šæ€§
+# uniqueColors <- unique(mergedColors)
+# moduleConnectivity <- list()
+# 
+# for (color in uniqueColors) {
+#   moduleGenes <- which(mergedColors == color)
+#   moduleExpr <- datExpr_filted[, moduleGenes]
+#   
+#   # è®¡ç®—æ¨¡å—å†…çš„åŠ æƒé‚»æ¥çŸ©é˜µ
+#   kbe_module <- abs(cor(moduleExpr, use = "p"))^softPower
+#   
+#   # è®¡ç®—æ¨¡å—å†…çš„è¿é€šæ€§
+#   connectivity <- rowSums(kbe_module) - 1
+#   moduleConnectivity[[color]] <- connectivity
+# }
 
 
+#è¾“å‡º
+#write.table(gene_select, 'gene_select.txt', sep = '\t', col.names = NA, quote = FALSE)
+#write.table(tom_select, 'tom_select.txt', sep = '\t', col.names = NA, quote = FALSE)
+
+
+#é€‰æ‹© black æ¨¡å—å†…çš„åŸºå› 
+gene_black <- datExpr_filted[ ,gene_module_select]
+
+#åŸºå› çš„æ¨¡å—æˆå‘˜åº¦ï¼ˆmodule membershipï¼‰è®¡ç®—
+#å³å„åŸºå› è¡¨è¾¾å€¼ä¸ç›¸åº”æ¨¡å—ç‰¹å¾åŸºå› çš„ç›¸å…³æ€§ï¼Œå…¶è¡¡é‡äº†åŸºå› åœ¨å…¨å±€ç½‘ç»œä¸­çš„ä½ç½®
+geneModuleMembership <- signedKME(gene_black, module['MEblack'], outputColumnName = 'MM')
+MMPvalue <- as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nrow(module)))
+
+#å„åŸºå› è¡¨è¾¾å€¼ä¸ä¸´åºŠè¡¨å‹çš„ç›¸å…³æ€§åˆ†æ
+# æ£€æŸ¥åŸºå› è¡¨è¾¾æ•°æ®ä¸­çš„å˜å¼‚åº¦
+
+geneTraitSignificance <- as.data.frame(cor(gene_black, trait['Subtype III'], use = 'p'))
+GSPvalue <- as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nrow(trait)))
+GeneSignificance <- abs(geneTraitSignificance)
+# è®¡ç®— black æ¨¡å—ä¸­çš„æ¨¡å—æˆå‘˜ç³»æ•°ï¼ˆMMï¼‰
+
+plot(geneModuleMembership[,1],GeneSignificance[,1] , 
+     xlab = "Module Membership in black module", 
+     ylab = "Gene significance for trait",
+     main = "Module membership vs. gene significance\n",
+     pch = 21, col = "black", bg = "white")
+#é€‰æ‹©æ˜¾è‘—ï¼ˆp<0.01ï¼‰ã€é«˜ black æ¨¡å—æˆå‘˜åº¦ï¼ˆMM>=0.8ï¼‰ï¼Œä¸ TNM è¡¨å‹é«˜åº¦ç›¸å…³ï¼ˆr>=0.8ï¼‰çš„åŸºå› 
+geneModuleMembership[geneModuleMembership<0.5 | MMPvalue>0.01] <- 0
+geneTraitSignificance[abs(geneTraitSignificance)<0.1 | GSPvalue>0.01] <- 0
+
+select <- cbind(geneModuleMembership, geneTraitSignificance)
+
+
+select0 <- subset(select, geneModuleMembership>=0.8 & geneTraitSignificance>=0.45)
+
+# [1] "FOXN3"         "NR3C1"         "PLEKHO1"       "ATP8B2"        "TTC28"        
+# [6] "GYPC"          "C20orf194"     "CLIP4"         "MAGI2-AS3"     "RBMS3"        
+# [11] "CNRIP1"        "PDE1A"         "SLC9A9"        "NR2F2-AS1"     "RP11-875O11.1"
+# [16] "RP11-730A19.9"
+kwithin00 <- kwithin0[rownames(select0), , drop = FALSE]  # å–df2çš„ç¬¬ä¸€åˆ—
+select0$kwithin <- kwithin00[,1] 
+write.csv(select0,"sub1_hub.csv")
+plotNetworkHeatmap(datExpr_filted,
+                   plotGenes = rownames(select0),
+                   networkType = "unsigned",
+                   useTOM = TRUE,
+                   power=powers,
+                   main="unsigned correlations")
+
+
+select1 <- subset(select, geneModuleMembership>=0.8 & abs(geneTraitSignificance)>=0.1)
+rownames(select1)
+# [1] "MALAT1"        "NPIPB5"        "RP11-166B2.3"  "RP11-416A17.6" "CTD-2014D20.1"
+# [6] "LA16c-431H6.6" "RYKP1"         "RP11-49O14.2"  "RP11-192H23.7"
+
+#0.8
+# [1] "SGK494"        "AC010976.2"    "ANKRD61"       "GTF3C2-AS1"    "DDX50P1"      
+# [6] "RP11-416A17.6" "RP11-29H23.7"  "AL590762.11"  
+kwithin11 <- kwithin1[rownames(select1), , drop = FALSE]  # å–df2çš„ç¬¬ä¸€åˆ—
+select1$kwithin <- kwithin11[,1] 
+write.csv(select1,"0.7&0.2çš„sub2.csv")
+write.csv(select1,"0.8&0.1çš„sub2.csv")
+
+plotNetworkHeatmap(datExpr_filted,
+                   plotGenes = rownames(select1),
+                   networkType = "unsigned",
+                   useTOM = TRUE,
+                   power=powers,
+                   main="unsigned correlations")
+
+select2 <- subset(select, geneModuleMembership>=0.8 & abs(geneTraitSignificance)>=0.4)
+# [1] "SPARC" "BGN"   "SULF1" "THY1"  "CDH11" "PRRX1" "FAP"   "NOX4" 
+kwithin22 <- kwithin2[rownames(select2), , drop = FALSE]  # å–df2çš„ç¬¬ä¸€åˆ—
+select2$kwithin <- kwithin22[,1] 
+write.csv(select2,"hub3.csv")
+
+plotNetworkHeatmap(datExpr_filted,
+                   plotGenes = rownames(select2),
+                   networkType = "unsigned",
+                   useTOM = TRUE,
+                   power=powers,
+                   main="unsigned correlations")
+
+
+
+
+
+
+
+dir.create('cytoscape0705', recursive = TRUE)
+
+for (mod in 1:nrow(table(mergedColors))) {
+  modules <- names(table(mergedColors))[mod]
+  probes <- colnames(datExpr_filted)
+  inModule <- (mergedColors == modules)
+  modProbes <- probes[inModule]
+  modGenes <- modProbes
+  modtom_sim <- tom_sim[inModule, inModule]
+  dimnames(modtom_sim) <- list(modProbes, modProbes)
+  outEdge <- paste('cytoscape0705/', modules, '.edge_list.txt',sep = '')
+  outNode <- paste('cytoscape0705/', modules, '.node_list.txt', sep = '')
+  exportNetworkToCytoscape(modtom_sim,
+                           edgeFile = outEdge,
+                           nodeFile = outNode,
+                           weighted = TRUE,
+                           threshold = 0.3,  #è¯¥å‚æ•°å¯æ§åˆ¶è¾“å‡ºçš„è¾¹æ•°é‡ï¼Œè¿‡æ»¤ä½æƒé‡çš„è¾¹
+                           nodeNames = modProbes,
+                           altNodeNames = modGenes,
+                           nodeAttr = mergedColors[inModule])
+}
